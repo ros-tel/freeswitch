@@ -1376,6 +1376,40 @@ GCC_DIAG_ON(deprecated-declarations)
 	return SWITCH_STATUS_SUCCESS;
 }
 
+static char *gen_h264_fmtp(avcodec_profile_t *aprofile, switch_memory_pool_t *pool)
+{
+	unsigned constraint_set0_flag = 0,
+		constraint_set1_flag = 0,
+		constraint_set2_flag = 0,
+		constraint_set3_flag = 0,
+		constraint_set4_flag = 0,
+		constraint_set5_flag = 0,
+		profile_idc = aprofile->ctx.profile & 0xff,
+		reverse_constraint = (aprofile->ctx.profile >> 8) & 0xff,
+		profile_iop = 0;
+	char buf[256] = { 0 };
+
+	if (reverse_constraint >> 1 & 1)
+		constraint_set1_flag = 1;
+	if (reverse_constraint >> 3 & 1)
+		constraint_set3_flag = 1;
+
+	profile_iop |= constraint_set0_flag<<7
+		| constraint_set1_flag<<6
+		| constraint_set2_flag<<5
+		| constraint_set3_flag<<4
+		| constraint_set4_flag<<3
+		| constraint_set5_flag<<2;
+
+	snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "profile-level-id=%02x%02x%02x; ", profile_idc, profile_iop, aprofile->ctx.level);
+
+	if (end_of(buf) == ' ') {
+		*(end_of_p(buf) - 1) = '\0';
+	}
+
+	return switch_core_strdup(pool, buf);
+}
+
 static switch_status_t switch_h264_init(switch_codec_t *codec, switch_codec_flag_t flags, const switch_codec_settings_t *codec_settings)
 {
 	int encoding, decoding;
@@ -1407,6 +1441,10 @@ static switch_status_t switch_h264_init(switch_codec_t *codec, switch_codec_flag
 		context->av_codec_id = AV_CODEC_ID_H263P;
 	} else {
 		context->av_codec_id = AV_CODEC_ID_H264;
+
+		if (!codec->fmtp_out) {
+			codec->fmtp_out = gen_h264_fmtp(profile, codec->memory_pool);
+		}
 	}
 
 	profile = find_profile(get_profile_name(context->av_codec_id), SWITCH_FALSE);
@@ -2285,12 +2323,19 @@ static void load_config()
 SWITCH_MODULE_LOAD_FUNCTION(mod_avcodec_load)
 {
 	switch_codec_interface_t *codec_interface;
+	avcodec_profile_t *aprofile = NULL;
+	char *dft_h264_fmtp = NULL;
 
 	memset(&avcodec_globals, 0, sizeof(struct avcodec_globals));
 	load_config();
 
+	aprofile = find_profile("H264", SWITCH_FALSE);
+	if (aprofile) {
+		dft_h264_fmtp = gen_h264_fmtp(aprofile, pool);
+	}
+
 	SWITCH_ADD_CODEC(codec_interface, "H264 Video");
-	switch_core_codec_add_video_implementation(pool, codec_interface, 99, "H264", NULL,
+	switch_core_codec_add_video_implementation(pool, codec_interface, 99, "H264", dft_h264_fmtp,
 											   switch_h264_init, switch_h264_encode, switch_h264_decode, switch_h264_control, switch_h264_destroy);
 
 	SWITCH_ADD_CODEC(codec_interface, "H263 Video");
